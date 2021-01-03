@@ -1,0 +1,459 @@
+
+//
+// includes
+//
+
+#include <Adafruit_NeoPixel.h>
+
+//
+// debug settings
+//
+
+//#define DEBUG                                 // print debug messages
+//#define DEBUGVERBOSE                          // print calculated delay for fly in and out
+//#define DEBUGCHECKPIXEL0                      // visual check which pixel is at 0 (after MAINPIXELOFFSET), sets it off after the startup fade in
+
+#ifdef DEBUG
+  #define DEBUGPRINT(x)   Serial.print(x)
+  #define DEBUGPRINTLN(x) Serial.println(x)
+#else
+  #define DEBUGPRINT(x)
+  #define DEBUGPRINTLN(x)
+#endif
+
+//
+// definitions
+//
+
+#define SIGNALPIN           6                   // @EB-setup the digital output pin
+
+// definition for 2 24 LED rings
+//#define NUMOFPIXELS        48                   // @EB-setup the number of pixels
+//#define TWOSTRIPS                               // @EB-setup define when using 2 LED strips
+//#define MAINPIXELOFFSET     0                   // @EB-setup offset for pixel 0
+//#define STRIP2OFFSET        1                   // @EB-setup offset for the 2nd strip (only works with 2 strips)
+
+// definition for 1 60 LED ring
+#define NUMOFPIXELS        60                   // @EB-setup the number of pixels
+#define MAINPIXELOFFSET     0                   // @EB-setup offset for pixel 0
+
+//
+// settings
+//
+
+const int colorWheel = 0;                       // 0 red-green, 1 red-green-yellow, 2 red-green-white, 3 red-green-yellow-red-green-white
+                                                // 4 red-green-blue 5 red-green-blue-red-green-yellow
+const int maxColorWheel = 5;
+const bool loopColorWheel = true;               // if true, loop through the color wheels
+const int multiplier = 3;                       // multiplier for the number of loops of the animations
+
+int startFadeDelay = 50;
+int maxBrightness = 30;
+int ledBrightness = maxBrightness;
+
+int fadeDelay = 750;
+int fadeHoldDelay = 5000;
+
+int flyDelay = 5;
+int flyStep = 1;
+float flyDelayFactor = .8;
+
+int circleDelay = 30;
+
+int slowLoopDelay = 500;
+int slowLoopCount = 25 * multiplier;
+
+int fastLoopDelay = 60;
+int fastLoopCount = 100 * multiplier;
+
+int walkDelay = 500;
+int walkCount = 5 * multiplier;
+
+int flashDelay = 200;
+int flashCount = 10 * multiplier / 2;
+
+//
+// setup variables
+//
+
+int pixelOffset = 0;
+int colorRange = 0;
+int currentColorWheel = colorWheel;
+bool mainLoopBit = false;
+
+#ifdef TWOSTRIPS
+  int middlePixel = NUMOFPIXELS / 2;
+#endif
+
+uint32_t stripColor[NUMOFPIXELS + 6];
+
+Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMOFPIXELS, SIGNALPIN, NEO_GRB + NEO_KHZ800); // grb
+
+//
+// setup
+//
+
+void setup() {
+  #ifdef DEBUGPRINT
+    Serial.begin(115200);
+    DEBUGPRINTLN("Setup");
+  #endif
+  pixels.begin();
+  fadeIn();
+
+  #ifdef DEBUGCHECKPIXEL0
+    setOneLed(0, 0);
+    #ifdef TWOSTRIPS
+      setOneLed(middlePixel ,0);
+    #endif
+    pixels.show();
+    delay(7500);
+  #endif
+}
+
+//
+// main loop
+//
+
+void loop() {  
+  DEBUGPRINTLN("Main loop");
+  slowLoop();
+  fastLoop();
+  walk();
+  flash();
+  
+  #ifdef TWOSTRIPS
+    circleOut();
+    circleIn();
+    circleOut();
+  #else
+    if (mainLoopBit)
+      circleOut();
+    else
+      flyOut();
+  #endif
+
+  if (loopColorWheel) {
+    pixelOffset = 0;
+    currentColorWheel++;
+    if (currentColorWheel > maxColorWheel)
+      currentColorWheel = 0;
+    DEBUGPRINTLN("  Colorwheel set to " + String(currentColorWheel));
+    setStripColors();
+  }
+
+  #ifdef TWOSTRIPS
+    circleIn();
+  #else
+    if (mainLoopBit)
+      circleIn();
+    else
+      flyIn();
+  #endif
+
+  mainLoopBit = !mainLoopBit;
+}
+
+//
+// functions
+//
+
+void fadeIn() {
+  DEBUGPRINTLN("Fade in");
+  for (int i = 0; i <= maxBrightness; i += 2) {  
+    ledBrightness = i;
+    setStripColors();
+    setPixelColors();
+    delay(startFadeDelay);
+  }
+}
+
+void slowLoop() {
+  DEBUGPRINTLN("  Anim: Slow loop");
+  for (int i = 0; i < slowLoopCount; i++) {
+    setPixelColors();
+    pixelOffset++;
+    pixelOffset = pixelOffset % (colorRange + 1);
+    delay(slowLoopDelay);
+  }
+}
+
+void fastLoop() {
+  DEBUGPRINTLN("  Anim: Fast loop");
+  for (int i = 0; i < fastLoopCount; i++) {
+    setPixelColors();
+    pixelOffset++;
+    pixelOffset = pixelOffset % (colorRange + 1);
+    delay(fastLoopDelay);
+  }
+}
+
+void flyOut() {
+  int i, j, delayTime;
+  DEBUGPRINTLN("  Anim: Fly out");
+  
+  for (i = 0; i < NUMOFPIXELS; i++) {
+    for (j = i; j > 0; j = j - flyStep) {
+      setOneLed(j, stripColor[(i + pixelOffset) % NUMOFPIXELS]);
+      pixels.show();
+      
+      delayTime = flyDelay - ((i * flyDelay * flyDelayFactor) / NUMOFPIXELS);
+      #ifdef DEBUGVERBOSE
+        DEBUGPRINT(delayTime);
+        DEBUGPRINT("  ");
+      #endif
+      delay(delayTime);
+      setOneLed(j, 0);
+    }
+  }
+  
+  #ifdef DEBUGVERBOSE
+    DEBUGPRINTLN();
+  #endif
+  pixels.show();
+}
+
+void flyIn() {
+  int i, j, delayTime;
+  DEBUGPRINTLN("  Anim: Fly in");
+  
+  for (i = 0; i < NUMOFPIXELS; i++) {
+    for (j = NUMOFPIXELS - i % flyStep; j > i; j = j - flyStep) {
+      if (j >= 0) {
+        setOneLed((j - 1), stripColor[(i + pixelOffset) % NUMOFPIXELS]);        
+        pixels.show();
+        
+        delayTime = flyDelay - (((NUMOFPIXELS - i) * flyDelay * flyDelayFactor) / NUMOFPIXELS);
+        #ifdef DEBUGVERBOSE
+          DEBUGPRINT(delayTime);
+          DEBUGPRINT("  ");
+        #endif
+        delay(delayTime);
+        setOneLed((j - 1), 0);
+      }
+    }
+    setOneLed((i - 1), stripColor[(i + pixelOffset) % NUMOFPIXELS]);
+  }
+
+  #ifdef DEBUGVERBOSE
+    DEBUGPRINTLN();
+  #endif
+  pixels.show();
+}
+
+void circleOut() {
+  int i;
+  DEBUGPRINTLN("  Anim: Circle out");
+  
+  for (i = 0; i < NUMOFPIXELS; i++) {
+    setOneLed(i, 0);
+    pixels.show();
+    delay(circleDelay);
+  }
+}
+
+void circleIn() {
+  int i;
+  DEBUGPRINTLN("  Anim: Circle in");
+  
+  for (i = 0; i < NUMOFPIXELS; i++) {
+    setOneLed(i, stripColor[(i + pixelOffset) % NUMOFPIXELS]);
+    pixels.show();
+    delay(circleDelay);
+  }
+}
+
+void flash() {
+  DEBUGPRINTLN("  Anim: Flash");
+  
+  for (int i = 0; i < flashCount; i++) {
+    ledBrightness = maxBrightness * .2;
+    setStripColors();
+    setPixelColors();
+    delay(flashDelay);
+
+    ledBrightness = maxBrightness * .7;
+    setStripColors();
+    setPixelColors();
+    delay(flashDelay);
+  }
+  
+  ledBrightness = maxBrightness;
+  setStripColors();
+}
+
+void walk() { 
+  DEBUGPRINTLN("  Anim: Walk");
+  
+  int i, j, k, pixelCol;
+  uint32_t pixelColor;
+
+  for (k = 0; k < walkCount; k++) {
+    for (j = colorRange; j >= 0; j--) {
+      for (i = 0; i < NUMOFPIXELS; i++) {
+        if ((i % (colorRange + 1)) == j) {
+          pixelCol = i + pixelOffset;
+          if (pixelCol >= NUMOFPIXELS)
+            pixelCol -= colorRange + 1; 
+          pixelColor = stripColor[pixelCol];
+        } else
+          pixelColor = 0;
+        setOneLed(i, pixelColor);
+      }
+      pixels.show();
+      delay(walkDelay);
+    }
+  }
+}
+
+//
+// function for settings colors
+//
+
+void setStripColors() {  
+  switch (currentColorWheel) {
+    case 0: setStripColorsRG();     break;
+    case 1: setStripColorsRGY();    break;
+    case 2: setStripColorsRGW();    break;
+    case 3: setStripColorsRGYRGW(); break;
+    case 4: setStripColorsRGB();    break;
+    case 5: setStripColorsRGBRGY(); break;
+  }
+}
+
+void setStripColorsRG() {
+  int r, g, b;
+  colorRange = 1;
+  
+  r = ledBrightness;
+  g = ledBrightness;
+  b = 0;
+
+  for (int i = 0; i < NUMOFPIXELS; i += 2) {
+    stripColor[i] = pixels.Color(r, 0, 0);    
+    stripColor[i+1] = pixels.Color(0, g, 0);
+  }
+}
+
+void setStripColorsRGY() {
+  int r, g, gy, b;
+  colorRange = 2;
+  
+  r = ledBrightness;
+  g = ledBrightness;  
+  gy = (ledBrightness * 215 / 255);
+  b = 0;
+
+  for (int i = 0; i < NUMOFPIXELS ; i += 3) {
+    stripColor[i] = pixels.Color(r, 0, 0);    
+    stripColor[i+1] = pixels.Color(0, g, 0);
+    stripColor[i+2] = pixels.Color(r, gy, 0);
+  }
+}
+
+void setStripColorsRGW() {
+  int r, g, bw;
+  colorRange = 2;
+  
+  r = ledBrightness;
+  g = ledBrightness;
+  bw = ledBrightness / 3;
+
+  for (int i = 0; i < NUMOFPIXELS ; i += 3) {
+    stripColor[i] = pixels.Color(r, 0, 0);    
+    stripColor[i+1] = pixels.Color(0, g, 0);
+    stripColor[i+2] = pixels.Color(r, g, bw);
+  }
+}
+
+void setStripColorsRGYRGW() {
+  int r, g, gy, bw;
+  colorRange = 5;
+  
+  r = ledBrightness;
+  g = ledBrightness;  
+  gy = (ledBrightness * 215 / 255);
+  bw = ledBrightness / 3;
+
+  for (int i = 0; i < NUMOFPIXELS ; i += 6) {
+    stripColor[i] =  pixels.Color(r, 0, 0);    
+    stripColor[i+1] = pixels.Color(0, g, 0);
+    stripColor[i+2] = pixels.Color(r, gy, 0);
+    stripColor[i+3] = pixels.Color(r, 0, 0);    
+    stripColor[i+4] = pixels.Color(0, g, 0);
+    stripColor[i+5] = pixels.Color(r, g, bw);
+  }
+}
+
+void setStripColorsRGB() {
+  int r, g, b;
+  colorRange = 2;
+  
+  r = ledBrightness;
+  g = ledBrightness;  
+  b = ledBrightness;
+
+  for (int i = 0; i < NUMOFPIXELS ; i += 3) {
+    stripColor[i] = pixels.Color(r, 0, 0);    
+    stripColor[i+1] = pixels.Color(0, g, 0);
+    stripColor[i+2] = pixels.Color(0, 0, b);
+  }
+}
+
+void setStripColorsRGBRGY() {
+  int r, g, gy, b;
+  colorRange = 5;
+  
+  r = ledBrightness;
+  g = ledBrightness;  
+  gy = (ledBrightness * 215 / 255);
+  b = ledBrightness;
+
+  for (int i = 0; i < NUMOFPIXELS ; i += 6) {
+    stripColor[i] =  pixels.Color(r, 0, 0);    
+    stripColor[i+1] = pixels.Color(0, g, 0);
+    stripColor[i+2] = pixels.Color(r, gy, 0);
+    stripColor[i+3] = pixels.Color(r, 0, 0);    
+    stripColor[i+4] = pixels.Color(0, g, 0);
+    stripColor[i+5] = pixels.Color(0, 0, b);
+  }
+}
+
+void setPixelColors() {
+  int pixelCol;
+  
+  for (int i = 0; i < NUMOFPIXELS; i++) {
+    pixelCol = i + pixelOffset;
+    if (pixelCol >= NUMOFPIXELS)
+      pixelCol -= colorRange + 1;
+      
+    setOneLed(i, stripColor[pixelCol]);
+  }
+  pixels.show();
+}
+
+void setOneLed(int pixel, uint32_t color) {
+  int targetPixel;
+
+  #ifdef TWOSTRIPS
+    if (pixel < middlePixel) {
+      targetPixel = (pixel + MAINPIXELOFFSET) % middlePixel;
+      if (targetPixel < 0)
+        targetPixel += middlePixel;
+
+      pixels.setPixelColor(targetPixel, color);  
+    } else {
+      targetPixel = (NUMOFPIXELS - pixel - MAINPIXELOFFSET - STRIP2OFFSET) % middlePixel;
+      if (targetPixel < 0)
+        targetPixel += middlePixel;
+        
+      pixels.setPixelColor((middlePixel + targetPixel), color);  
+    }
+  #else
+    targetPixel = (pixel + MAINPIXELOFFSET) % NUMOFPIXELS;
+    if (targetPixel < 0)
+      targetPixel += NUMOFPIXELS;
+
+    pixels.setPixelColor(targetPixel, color);
+  #endif
+}
